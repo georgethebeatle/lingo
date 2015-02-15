@@ -2,42 +2,59 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sync"
 )
 
-func numbers(nums ...int) <-chan int {
+var statistics = make(map[string]int)
+
+func numbers(done <-chan struct{}, nums ...int) <-chan int {
+	statistics["total"] = len(nums)
 	out := make(chan int)
 	go func() {
 		defer close(out)
 		for _, num := range nums {
-			out <- num
+			select {
+			case out <- num:
+			case <-done:
+				return
+			}
 		}
 	}()
 
 	return out
 }
 
-func sq(in <-chan int, colour string) <-chan int {
+func worker_sq(done <-chan struct{}, in <-chan int, colour string) <-chan int {
 	out := make(chan int)
 	go func() {
 		defer close(out)
 		for num := range in {
-			fmt.Printf("%s handling '%d'\n", colour, num)
-			out <- num * num
+			select {
+			case out <- num * num:
+				statistics[colour] += 1
+				fmt.Printf("%s handling '%d'\n", colour, num)
+			case <-done:
+				return
+			}
 		}
 	}()
 
 	return out
 }
 
-func merge(channels ...<-chan int) <-chan int {
+func merge(done <-chan struct{}, channels ...<-chan int) <-chan int {
 	out := make(chan int)
 	var wg sync.WaitGroup
 
 	drain := func(channel <-chan int) {
 		defer wg.Done()
 		for num := range channel {
-			out <- num
+			select {
+			case out <- num:
+			case <-done:
+				return
+			}
 		}
 	}
 
@@ -57,15 +74,33 @@ func merge(channels ...<-chan int) <-chan int {
 }
 
 func main() {
-	num_chan := numbers(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+	// channel for interruption of the pipeline
+	done := make(chan struct{})
 
-	red := sq(num_chan, "red")
-	green := sq(num_chan, "green")
-	blue := sq(num_chan, "blue")
+	num_chan := numbers(done, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 
-	results := merge(red, green, blue)
+	red := worker_sq(done, num_chan, "red")
+	green := worker_sq(done, num_chan, "green")
+	blue := worker_sq(done, num_chan, "blue")
+
+	results := merge(done, red, green, blue)
+
+	if len(os.Args) > 1 && os.Args[1] == "--interrupt" {
+		// interrupt the pipeline execution at random time
+		go func() {
+			fmt.Println("Ahaaaaa!")
+			close(done)
+		}()
+	}
 
 	for num := range results {
 		fmt.Printf("=> %d\n", num)
 	}
+
+	fmt.Println("---")
+	fmt.Printf("Total numbers: %d\n", statistics["total"])
+	fmt.Printf("Red: %d\n", statistics["red"])
+	fmt.Printf("Green: %d\n", statistics["green"])
+	fmt.Printf("Blue: %d\n", statistics["blue"])
+
 }
