@@ -23,4 +23,9 @@ _testmain.go
 *.test
 *.prof
 
+# vim swap files
+*.swp
+
+# executables
 broadcaster/broadcaster
+pipeline/pipeline
